@@ -36,8 +36,8 @@ Prefer a repo-root executable such as `./ralph-loop` as the user-facing command,
 ```
 ralph-loop "<user prompt>" [options]
 ralph-loop --prd [options]
-ralph-loop tail [selector] [--lines N] [--follow] [--raw]
-ralph-loop ls [selector]
+ralph-loop tail [selector] [--lines N] [--follow] [--raw] [--output <format>]
+ralph-loop ls [selector] [--output <format>]
 
 Options:
   --model <model>          Codex model to use (default: gpt-5.3-codex)
@@ -47,8 +47,53 @@ Options:
   --timeout <seconds>      Max wall-clock time for entire run (default: 21600 = 6h)
   --approval-policy <p>    Codex approval policy (default: never)
   --sandbox <policy>       Codex sandbox policy (default: workspace-write)
+  --output <format>        Output format: text, json, ndjson (default: text on TTY, json otherwise)
   --preserve-worktree      Keep the generated worktree on exit for debugging
   --prd                    Read the task prompt from PRD.md at the repo root, then clear PRD.md
+```
+
+### Machine-readable output
+
+Machine-readable output is a required CLI contract, not a debug-only feature.
+
+- Every command must support `--output text`, `--output json`, and `--output ndjson`.
+- When stdout is a TTY, default to `text`.
+- When stdout is not a TTY, default to `json`.
+- `text` is for human operators.
+- `json` emits exactly one JSON object for the full command result.
+- `ndjson` emits one JSON object per event or record and is the preferred format for streaming commands such as the main loop and `tail --follow`.
+- Errors must remain structured in `json` and `ndjson` modes. Do not fall back to prose-only stderr for machine-readable modes.
+- Shared fields such as `command`, `status`, `error`, `phase`, `iteration`, `event`, `ts`, `worktree_path`, and `work_branch` should keep stable names and meanings across commands.
+
+Recommended behavior:
+
+- `ralph-loop "<prompt>" --output json` returns a single object describing the run result, including final status, worktree metadata, iteration count, plan path, PR URL if created, and any structured error.
+- `ralph-loop "<prompt>" --output ndjson` streams lifecycle events as they happen and ends with a terminal event.
+- `ralph-loop ls --output json` returns a JSON array of running sessions.
+- `ralph-loop ls --output ndjson` emits one session object per line.
+- `ralph-loop tail --output json` returns the selected log metadata plus an array of lines or parsed records.
+- `ralph-loop tail --follow --output ndjson` emits one structured log or event record per line.
+
+Example NDJSON events:
+
+```json
+{"command":"main","event":"run.started","status":"running","ts":"2026-03-15T12:00:00Z","worktree_path":"/repo/.worktrees/ralph-foo","work_branch":"ralph-foo"}
+{"command":"main","event":"phase.started","phase":"setup","status":"running","ts":"2026-03-15T12:00:01Z"}
+{"command":"main","event":"iteration.completed","phase":"coding","iteration":1,"status":"ok","commit":"abc1234","ts":"2026-03-15T12:03:10Z"}
+{"command":"main","event":"run.completed","status":"completed","iterations":3,"plan_path":"/repo/docs/exec-plans/completed/foo.md","pr_url":"https://github.com/org/repo/pull/123","ts":"2026-03-15T12:14:22Z"}
+```
+
+Example structured error:
+
+```json
+{
+  "command": "main",
+  "status": "failed",
+  "error": {
+    "code": "setup_failed",
+    "message": "setup agent completed without the required completion token"
+  }
+}
 ```
 
 ---
@@ -353,9 +398,18 @@ The built harness also benefited from:
 ### Logging
 
 - Log all Codex events to `.worktree/<worktree_id>/logs/ralph-loop.log`.
-- Print high-level status to stdout: phase transitions, iteration counts, commit hashes, completion signal, PR URL.
+- Print high-level status to stdout in `text` mode: phase transitions, iteration counts, commit hashes, completion signal, PR URL.
+- In `json` and `ndjson` modes, write structured stdout instead of human log lines.
 - On failure, print the last N lines of the log for debugging.
 - Treat log writes as best-effort only; logging must never crash the loop runner.
+
+### Output architecture
+
+- Implement a shared renderer for `text`, `json`, and `ndjson` so every command uses the same output contract.
+- Do not require environment variables for structured stdout. Environment-gated debug event streams are acceptable as internal diagnostics, but the user-facing interface must be `--output`.
+- In `ndjson` mode, emit each record on a single line with no prefixes or wrappers.
+- In `json` mode, buffer command progress internally and emit exactly one final object.
+- Keep stderr human-oriented only in `text` mode. In machine-readable modes, encode errors in stdout JSON and keep stderr empty unless the process itself cannot initialize.
 
 ### Integration with harness
 
@@ -375,7 +429,10 @@ The built harness also benefited from:
 - [ ] PR-agent orchestration
 - [ ] Worktree/init integration that parses the `init.sh` JSON contract
 - [ ] Structured log file under `.worktree/<id>/logs/ralph-loop.log`
+- [ ] Shared `--output text|json|ndjson` contract across `main`, `ls`, and `tail`
+- [ ] Structured JSON errors in machine-readable modes
 - [ ] Tests for CLI parsing, app-server client behavior, completion detection, and prompt construction
+- [ ] Tests covering `json` and `ndjson` output contracts, including non-TTY defaulting
 - [ ] `Makefile.harness` target for `ralph-loop`
 
 ---
@@ -387,6 +444,9 @@ The built harness also benefited from:
 3. Confirm the coding agent iterates, commits per iteration, and eventually outputs `<promise>COMPLETE</promise>`.
 4. Confirm the PR agent opens a well-formed PR with the plan summary.
 5. Confirm the worktree is cleaned up after completion.
+6. Confirm `ralph-loop ls --output json` returns valid JSON.
+7. Confirm `ralph-loop tail --follow --output ndjson` emits one JSON object per line.
+8. Confirm piping `ralph-loop "<prompt>"` without `--output` defaults to structured JSON rather than text.
 
 ---
 
