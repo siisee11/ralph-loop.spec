@@ -35,7 +35,6 @@ Prefer a repo-root executable such as `./ralph-loop` as the user-facing command,
 
 ```
 ralph-loop "<user prompt>" [options]
-ralph-loop --prd [options]
 ralph-loop tail [selector] [--lines N] [--follow] [--raw] [--output <format>]
 ralph-loop ls [selector] [--output <format>]
 
@@ -49,7 +48,6 @@ Options:
   --sandbox <policy>       Codex sandbox policy (default: workspace-write)
   --output <format>        Output format: text, json, ndjson (default: text on TTY, json otherwise)
   --preserve-worktree      Keep the generated worktree on exit for debugging
-  --prd                    Read the task prompt from PRD.md at the repo root, then clear PRD.md
 ```
 
 ### Machine-readable output

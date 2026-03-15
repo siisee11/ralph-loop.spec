@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	MainUsage = "Usage: ralph-loop \"<user prompt>\" [options]\n       ralph-loop --prd [options]\n       ralph-loop tail [selector] [--lines N] [--follow]\n       ralph-loop ls [selector]"
+	MainUsage = "Usage: ralph-loop \"<user prompt>\" [options]\n       ralph-loop tail [selector] [--lines N] [--follow]\n       ralph-loop ls [selector]"
 	TailUsage = "Usage: ralph-loop tail [selector] [--lines N] [--follow] [--raw]"
 	ListUsage = "Usage: ralph-loop ls [selector]"
 )
@@ -154,7 +154,6 @@ func ParseCommand(args []string, repoRoot string) (ParsedCommand, error) {
 
 func ParseMainArgs(args []string, repoRoot string) (MainOptions, error) {
 	promptParts := make([]string, 0, len(args))
-	usePRD := false
 	options := MainOptions{
 		Model:            "gpt-5.3-codex",
 		BaseBranch:       "main",
@@ -223,25 +222,12 @@ func ParseMainArgs(args []string, repoRoot string) (MainOptions, error) {
 			options.Sandbox = value
 		case "--preserve-worktree":
 			options.PreserveWorktree = true
-		case "--prd":
-			usePRD = true
 		default:
 			promptParts = append(promptParts, arg)
 		}
 	}
 
-	if usePRD && len(promptParts) > 0 {
-		return MainOptions{}, errors.New("Use either a positional prompt or --prd, not both")
-	}
-
 	prompt := strings.TrimSpace(strings.Join(promptParts, " "))
-	if usePRD {
-		prdPrompt, err := readPromptFromPRD(repoRoot)
-		if err != nil {
-			return MainOptions{}, err
-		}
-		prompt = prdPrompt
-	}
 
 	if prompt == "" {
 		return MainOptions{}, &usageError{message: MainUsage}
@@ -330,25 +316,6 @@ func requireValue(args []string, index *int, flag string) (string, error) {
 		return "", fmt.Errorf("Missing value for %s", flag)
 	}
 	return args[*index], nil
-}
-
-func readPromptFromPRD(repoRoot string) (string, error) {
-	prdPath := filepath.Join(repoRoot, "PRD.md")
-	content, err := os.ReadFile(prdPath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return "", fmt.Errorf("PRD file not found: %s", prdPath)
-		}
-		return "", err
-	}
-	prompt := strings.TrimSpace(string(content))
-	if writeErr := os.WriteFile(prdPath, []byte{}, 0o644); writeErr != nil {
-		return "", writeErr
-	}
-	if prompt == "" {
-		return "", fmt.Errorf("PRD file is empty: %s", prdPath)
-	}
-	return prompt, nil
 }
 
 var (
