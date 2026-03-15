@@ -13,7 +13,7 @@ import (
 func TestParseMainArgsDefaults(t *testing.T) {
 	t.Parallel()
 
-	options, err := ParseMainArgs([]string{"ship", "feature"}, t.TempDir(), OutputJSON)
+	options, err := ParseMainArgs([]string{"ship", "feature"}, OutputJSON)
 	if err != nil {
 		t.Fatalf("ParseMainArgs() error = %v", err)
 	}
@@ -59,7 +59,7 @@ func TestRunDefaultsToJSONWhenStdoutIsNotTTY(t *testing.T) {
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	code := Run([]string{"task"}, repo, &stdout, &stderr)
+	code := Run([]string{"task"}, repo, strings.NewReader(""), &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("Run() code = %d stderr=%s", code, stderr.String())
 	}
@@ -87,7 +87,7 @@ func TestRunInitDispatches(t *testing.T) {
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	code := Run([]string{"init", "--base-branch", "dev"}, repo, &stdout, &stderr)
+	code := Run([]string{"init", "--base-branch", "dev"}, repo, strings.NewReader(""), &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("Run() code = %d stderr=%s", code, stderr.String())
 	}

@@ -17,6 +17,14 @@ var (
 )
 
 func runMain(ctx context.Context, repoRoot string, options MainOptions, stdout io.Writer, stderr io.Writer) (err error) {
+	if options.DryRun {
+		preview, err := previewMainRun(repoRoot, options)
+		if err != nil {
+			return err
+		}
+		return writeJSON(stdout, preview)
+	}
+
 	worktreeName := strings.TrimPrefix(options.WorkBranch, "ralph-")
 	if worktreeName == "" {
 		worktreeName = "task"
@@ -114,16 +122,18 @@ func runMain(ctx context.Context, repoRoot string, options MainOptions, stdout i
 	}
 	setupClient.SetNotificationHandler(func(notification jsonRPCNotification) {
 		message := notificationToAgentMessage(notification)
-		if strings.TrimSpace(message) == "" {
+		sanitized := sanitizeUntrustedText(message)
+		if strings.TrimSpace(sanitized.Text) == "" {
 			return
 		}
 		emit(eventRecord{
-			Command: string(CommandMain),
-			Event:   "agent.message",
-			Status:  "running",
-			Phase:   "setup",
-			Message: message,
-			TS:      nowRFC3339(),
+			Command:   string(CommandMain),
+			Event:     "agent.message",
+			Status:    "running",
+			Phase:     "setup",
+			Message:   sanitized.Text,
+			Sanitized: sanitized.Sanitized,
+			TS:        nowRFC3339(),
 		})
 	})
 	if err := setupClient.Initialize(ctx); err != nil {
@@ -174,16 +184,18 @@ func runMain(ctx context.Context, repoRoot string, options MainOptions, stdout i
 	}
 	codingClient.SetNotificationHandler(func(notification jsonRPCNotification) {
 		message := notificationToAgentMessage(notification)
-		if strings.TrimSpace(message) == "" {
+		sanitized := sanitizeUntrustedText(message)
+		if strings.TrimSpace(sanitized.Text) == "" {
 			return
 		}
 		emit(eventRecord{
-			Command: string(CommandMain),
-			Event:   "agent.message",
-			Status:  "running",
-			Phase:   "coding",
-			Message: message,
-			TS:      nowRFC3339(),
+			Command:   string(CommandMain),
+			Event:     "agent.message",
+			Status:    "running",
+			Phase:     "coding",
+			Message:   sanitized.Text,
+			Sanitized: sanitized.Sanitized,
+			TS:        nowRFC3339(),
 		})
 	})
 	if err := codingClient.Initialize(ctx); err != nil {
@@ -246,16 +258,18 @@ func runMain(ctx context.Context, repoRoot string, options MainOptions, stdout i
 	}
 	prClient.SetNotificationHandler(func(notification jsonRPCNotification) {
 		message := notificationToAgentMessage(notification)
-		if strings.TrimSpace(message) == "" {
+		sanitized := sanitizeUntrustedText(message)
+		if strings.TrimSpace(sanitized.Text) == "" {
 			return
 		}
 		emit(eventRecord{
-			Command: string(CommandMain),
-			Event:   "agent.message",
-			Status:  "running",
-			Phase:   "pr",
-			Message: message,
-			TS:      nowRFC3339(),
+			Command:   string(CommandMain),
+			Event:     "agent.message",
+			Status:    "running",
+			Phase:     "pr",
+			Message:   sanitized.Text,
+			Sanitized: sanitized.Sanitized,
+			TS:        nowRFC3339(),
 		})
 	})
 	if err := prClient.Initialize(ctx); err != nil {
@@ -306,4 +320,44 @@ func runMain(ctx context.Context, repoRoot string, options MainOptions, stdout i
 
 func ensurePlanParent(planPath string) error {
 	return os.MkdirAll(filepath.Dir(planPath), 0o755)
+}
+
+func previewMainRun(repoRoot string, options MainOptions) (dryRunResult, error) {
+	initPreview, err := previewInitWorktree(repoRoot, InitOptions{
+		BaseBranch: options.BaseBranch,
+		WorkBranch: options.WorkBranch,
+		Output:     options.Output,
+		DryRun:     true,
+	})
+	if err != nil {
+		return dryRunResult{}, err
+	}
+	planPath := filepath.Join(initPreview.WorktreePath, "docs", "exec-plans", "active", defaultPlanFilename(options.Prompt))
+	return dryRunResult{
+		Command:      string(CommandMain),
+		Status:       "ok",
+		DryRun:       true,
+		Request: map[string]any{
+			"prompt":             options.Prompt,
+			"model":              options.Model,
+			"base_branch":        options.BaseBranch,
+			"work_branch":        options.WorkBranch,
+			"max_iterations":     options.MaxIterations,
+			"timeout_seconds":    options.TimeoutSeconds,
+			"approval_policy":    options.ApprovalPolicy,
+			"sandbox":            options.Sandbox,
+			"preserve_worktree":  options.PreserveWorktree,
+		},
+		PlannedSteps: []dryRunStep{
+			{Name: "init", Description: "Prepare the worktree environment"},
+			{Name: "setup-agent", Description: "Run the setup agent and create the execution plan"},
+			{Name: "coding-loop", Description: "Run the coding loop until completion or max iterations"},
+			{Name: "pr-agent", Description: "Create or update the pull request"},
+		},
+		WorktreePath: initPreview.WorktreePath,
+		WorkBranch:   initPreview.WorkBranch,
+		BaseBranch:   initPreview.BaseBranch,
+		RuntimeRoot:  initPreview.RuntimeRoot,
+		PlanPath:     planPath,
+	}, nil
 }

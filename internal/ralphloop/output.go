@@ -124,6 +124,18 @@ func isRenderedError(err error) bool {
 	return errors.As(err, &target)
 }
 
+type writerAdapter struct {
+	target io.Writer
+}
+
+func (writer writerAdapter) WriteJSON(payload any) error {
+	return writeJSON(writer.target, payload)
+}
+
+func (writer writerAdapter) WriteJSONLine(payload any) error {
+	return writeJSONLine(writer.target, payload)
+}
+
 func writeJSON(writer io.Writer, payload any) error {
 	encoded, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {

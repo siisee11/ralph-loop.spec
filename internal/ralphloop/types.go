@@ -9,6 +9,7 @@ const (
 	CommandMain CommandKind = "main"
 	CommandTail CommandKind = "tail"
 	CommandList CommandKind = "ls"
+	CommandSchema CommandKind = "schema"
 )
 
 type OutputFormat string
@@ -18,6 +19,8 @@ const (
 	OutputJSON   OutputFormat = "json"
 	OutputNDJSON OutputFormat = "ndjson"
 )
+
+type FieldMask []string
 
 type MainOptions struct {
 	Prompt           string
@@ -29,13 +32,17 @@ type MainOptions struct {
 	ApprovalPolicy   string
 	Sandbox          string
 	PreserveWorktree bool
+	DryRun           bool
 	Output           OutputFormat
+	OutputFile       string
 }
 
 type InitOptions struct {
 	BaseBranch string
 	WorkBranch string
+	DryRun     bool
 	Output     OutputFormat
+	OutputFile string
 }
 
 type TailOptions struct {
@@ -44,11 +51,31 @@ type TailOptions struct {
 	Raw      bool
 	Selector string
 	Output   OutputFormat
+	OutputFile string
+	Fields     FieldMask
+	Page       int
+	PageSize   int
+	PageAll    bool
 }
 
 type ListOptions struct {
 	Selector string
 	Output   OutputFormat
+	OutputFile string
+	Fields     FieldMask
+	Page       int
+	PageSize   int
+	PageAll    bool
+}
+
+type SchemaOptions struct {
+	Command    string
+	Output     OutputFormat
+	OutputFile string
+	Fields     FieldMask
+	Page       int
+	PageSize   int
+	PageAll    bool
 }
 
 type ParsedCommand struct {
@@ -57,6 +84,7 @@ type ParsedCommand struct {
 	MainOptions MainOptions
 	TailOptions TailOptions
 	ListOptions ListOptions
+	SchemaOptions SchemaOptions
 }
 
 type initResult struct {
@@ -71,6 +99,25 @@ type initResult struct {
 	RuntimeRoot   string        `json:"runtime_root,omitempty"`
 	Events        []eventRecord `json:"events,omitempty"`
 	Error         *commandError `json:"error,omitempty"`
+}
+
+type dryRunStep struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+type dryRunResult struct {
+	Command      string        `json:"command"`
+	Status       string        `json:"status"`
+	DryRun       bool          `json:"dry_run"`
+	Request      any           `json:"request,omitempty"`
+	PlannedSteps []dryRunStep  `json:"planned_steps,omitempty"`
+	WorktreePath string        `json:"worktree_path,omitempty"`
+	WorkBranch   string        `json:"work_branch,omitempty"`
+	BaseBranch   string        `json:"base_branch,omitempty"`
+	RuntimeRoot  string        `json:"runtime_root,omitempty"`
+	PlanPath     string        `json:"plan_path,omitempty"`
+	Error        *commandError `json:"error,omitempty"`
 }
 
 type commandError struct {
@@ -116,6 +163,7 @@ type eventRecord struct {
 	PlanPath     string `json:"plan_path,omitempty"`
 	PRURL        string `json:"pr_url,omitempty"`
 	Commit       string `json:"commit,omitempty"`
+	Sanitized    bool   `json:"sanitized,omitempty"`
 	TS           string `json:"ts"`
 }
 
@@ -145,6 +193,7 @@ type tailLineRecord struct {
 	Timestamp string `json:"ts,omitempty"`
 	Event     string `json:"event,omitempty"`
 	Status    string `json:"status,omitempty"`
+	Sanitized bool   `json:"sanitized,omitempty"`
 }
 
 func nowRFC3339() string {

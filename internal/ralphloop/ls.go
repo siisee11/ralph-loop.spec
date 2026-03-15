@@ -28,19 +28,12 @@ func runListCommand(repoRoot string, options ListOptions, stdout io.Writer, _ io
 	}
 
 	switch options.Output {
-	case OutputJSON:
+	case OutputJSON, OutputNDJSON:
 		records := make([]listSessionRecord, 0, len(sessions))
 		for _, session := range sessions {
 			records = append(records, sessionRecord(session))
 		}
-		return writeJSON(stdout, records)
-	case OutputNDJSON:
-		for _, session := range sessions {
-			if err := writeJSONLine(stdout, sessionRecord(session)); err != nil {
-				return err
-			}
-		}
-		return nil
+		return renderPagedResult(writerAdapter{target: stdout}, options.Output, string(CommandList), "ok", records, options.Fields, options.Page, options.PageSize, options.PageAll)
 	default:
 		if len(sessions) == 0 {
 			_, _ = fmt.Fprintf(stdout, "No running Ralph Loop sessions found under %s\n", repoRoot)

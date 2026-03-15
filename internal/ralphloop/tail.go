@@ -36,20 +36,8 @@ func runTailCommand(ctx context.Context, repoRoot string, options TailOptions, s
 	}
 
 	switch options.Output {
-	case OutputJSON:
-		return writeJSON(stdout, tailResult{
-			Command: string(CommandTail),
-			Status:  "ok",
-			LogPath: logPath,
-			Lines:   lines,
-		})
-	case OutputNDJSON:
-		for _, line := range lines {
-			if err := writeJSONLine(stdout, line); err != nil {
-				return err
-			}
-		}
-		return nil
+	case OutputJSON, OutputNDJSON:
+		return renderPagedResult(writerAdapter{target: stdout}, options.Output, string(CommandTail), "ok", lines, options.Fields, options.Page, options.PageSize, options.PageAll)
 	default:
 		_, _ = fmt.Fprintf(stdout, "Showing Ralph Loop log: %s\n", logPath)
 		for _, line := range lines {
@@ -139,11 +127,13 @@ func readTailLines(path string, lines int, raw bool) ([]tailLineRecord, error) {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
+		sanitized := sanitizeUntrustedText(line)
 		record := tailLineRecord{
-			Command: string(CommandTail),
-			LogPath: path,
-			Line:    line,
-			Status:  "ok",
+			Command:   string(CommandTail),
+			LogPath:   path,
+			Line:      sanitized.Text,
+			Status:    "ok",
+			Sanitized: sanitized.Sanitized,
 		}
 		if envelope, ok := parseLogEnvelope(part); ok {
 			record.Timestamp = envelope.Timestamp
@@ -175,13 +165,15 @@ func followLog(ctx context.Context, path string, lines int, raw bool, output Out
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
+		sanitized := sanitizeUntrustedText(line)
 
 		record := tailLineRecord{
-			Command: string(CommandTail),
-			LogPath: path,
-			Line:    line,
-			Event:   "tail.line",
-			Status:  "running",
+			Command:   string(CommandTail),
+			LogPath:   path,
+			Line:      sanitized.Text,
+			Event:     "tail.line",
+			Status:    "running",
+			Sanitized: sanitized.Sanitized,
 		}
 		if envelope, ok := parseLogEnvelope(rawLine); ok {
 			record.Timestamp = envelope.Timestamp

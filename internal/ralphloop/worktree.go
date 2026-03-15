@@ -47,6 +47,14 @@ var (
 )
 
 func runInitCommand(ctx context.Context, repoRoot string, options InitOptions, stdout io.Writer, stderr io.Writer) error {
+	if options.DryRun {
+		planned, err := previewInitWorktree(repoRoot, options)
+		if err != nil {
+			return err
+		}
+		return writeJSON(stdout, planned)
+	}
+
 	metadata, err := initWorktreeFn(ctx, initWorktreeOptions{
 		RepoRoot:     repoRoot,
 		BaseBranch:   options.BaseBranch,
@@ -76,6 +84,65 @@ func runInitCommand(ctx context.Context, repoRoot string, options InitOptions, s
 	default:
 		return writeJSON(stdout, result)
 	}
+}
+
+func previewInitWorktree(repoRoot string, options InitOptions) (dryRunResult, error) {
+	gitCtx, err := resolveGitContext(repoRoot)
+	if err != nil {
+		return dryRunResult{}, err
+	}
+
+	baseBranch := strings.TrimSpace(options.BaseBranch)
+	if baseBranch == "" {
+		baseBranch = "main"
+	}
+	workBranch := strings.TrimSpace(options.WorkBranch)
+	if workBranch == "" {
+		workBranch = deriveDefaultWorkBranch(gitCtx.CurrentRoot)
+	}
+	worktreeName := sanitizeToken(strings.TrimPrefix(workBranch, "ralph-"), 48)
+	if worktreeName == "" {
+		worktreeName = "task"
+	}
+
+	worktreePath := predictedWorktreePath(gitCtx, workBranch, worktreeName)
+	worktreeID, err := deriveWorktreeID(worktreePath)
+	if err != nil {
+		return dryRunResult{}, err
+	}
+	runtimeRoot := filepath.ToSlash(filepath.Join(".worktree", worktreeID)) + "/"
+
+	return dryRunResult{
+		Command:      string(CommandInit),
+		Status:       "ok",
+		DryRun:       true,
+		Request: map[string]any{
+			"base_branch": baseBranch,
+			"work_branch": workBranch,
+			"output":      options.Output,
+		},
+		PlannedSteps: []dryRunStep{
+			{Name: "resolve-worktree", Description: "Resolve or create the target git worktree"},
+			{Name: "clean-git-state", Description: "Inspect status, stash changes if necessary, and ensure the work branch is checked out"},
+			{Name: "install-dependencies", Description: "Detect and install project dependencies"},
+			{Name: "verify-build", Description: "Run the repository build or smoke command"},
+			{Name: "prepare-runtime", Description: "Populate .env, derive runtime metadata, and ensure runtime directories exist"},
+		},
+		WorktreePath: worktreePath,
+		WorkBranch:   workBranch,
+		BaseBranch:   baseBranch,
+		RuntimeRoot:  runtimeRoot,
+	}, nil
+}
+
+func predictedWorktreePath(gitCtx gitContext, workBranch string, worktreeName string) string {
+	if gitCtx.InsideLinked {
+		return gitCtx.CurrentRoot
+	}
+	if existingPath := findWorktreePathForBranch(context.Background(), gitCtx.CommonRoot, workBranch); existingPath != "" {
+		return existingPath
+	}
+	return filepath.Join(gitCtx.CommonRoot, ".worktrees", encodeTransportSegment(worktreeName))
 }
 
 func initWorktree(ctx context.Context, options initWorktreeOptions) (worktreeInitMetadata, error) {

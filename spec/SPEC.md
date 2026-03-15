@@ -34,12 +34,22 @@ The Ralph Loop has three phases:
 Prefer a repo-root executable such as `./ralph-loop` as the user-facing command, even if the active implementation lives elsewhere.
 
 ```
-ralph-loop init [--base-branch <branch>] [--work-branch <name>] [--output <format>]
+ralph-loop init [options]
 ralph-loop "<user prompt>" [options]
-ralph-loop tail [selector] [--lines N] [--follow] [--raw] [--output <format>]
-ralph-loop ls [selector] [--output <format>]
+ralph-loop tail [selector] [options]
+ralph-loop ls [selector] [options]
+ralph-loop schema [command] [options]
 
-Options:
+Global agent-first options:
+  --json <payload|->       Raw JSON payload for the command. Use - to read JSON from stdin.
+  --output <format>        Output format: text, json, ndjson (default: text on TTY, json otherwise)
+  --output-file <path>     Write the machine-readable result to a file under the current working directory
+  --fields <mask>          Comma-separated field mask to reduce response size
+  --page <n>               Page number for read commands (default: 1)
+  --page-size <n>          Items per page for read commands
+  --page-all               Stream every page in ndjson mode or aggregate every page in json mode
+
+Main options:
   --model <model>          Codex model to use (default: gpt-5.3-codex)
   --base-branch <branch>   Branch to create the worktree from (default: main)
   --max-iterations <n>     Safety cap on coding loop iterations (default: 20)
@@ -47,9 +57,72 @@ Options:
   --timeout <seconds>      Max wall-clock time for entire run (default: 21600 = 6h)
   --approval-policy <p>    Codex approval policy (default: never)
   --sandbox <policy>       Codex sandbox policy (default: workspace-write)
-  --output <format>        Output format: text, json, ndjson (default: text on TTY, json otherwise)
   --preserve-worktree      Keep the generated worktree on exit for debugging
+  --dry-run                Validate and describe the request without side effects
+
+Init options:
+  --base-branch <branch>   Branch to create the worktree from (default: main)
+  --work-branch <name>     Name for the working branch
+  --dry-run                Validate and describe the request without side effects
+
+Tail options:
+  --lines N                Number of log lines to read (default: 40)
+  --follow                 Stream appended log lines
+  --raw                    Return raw log payloads instead of summaries
+
+Schema options:
+  --command <name>         Command name to describe when not provided positionally
 ```
+
+### Raw payload input
+
+Raw payload input is a required CLI contract for agents.
+
+- Every command must accept `--json <payload>` and `--json -`.
+- The JSON payload must map directly to the command schema with no flag-specific translation layer.
+- Convenience flags remain supported, but raw JSON is first-class and documented alongside flags.
+- For mutating commands such as `init` and the main run command, agents must be able to construct the request directly from the machine-readable command schema.
+
+Example:
+
+```json
+{
+  "command": "init",
+  "base_branch": "main",
+  "work_branch": "ralph-agent-first",
+  "dry_run": true,
+  "output": "json"
+}
+```
+
+### Schema introspection
+
+Schema introspection is a required runtime surface.
+
+- `ralph-loop schema --output json` returns a machine-readable description of every command.
+- `ralph-loop schema <command> --output json` returns the exact live schema for that command.
+- The schema must include:
+  - command name and description,
+  - positional arguments,
+  - options and aliases,
+  - types,
+  - required fields,
+  - default values,
+  - enum values,
+  - nested raw payload schema,
+  - whether the command mutates state,
+  - whether `--dry-run` is supported.
+- The schema must be generated at runtime from the same descriptors the CLI uses for parsing so that it always reflects the current command surface.
+
+### Context window discipline
+
+The CLI must actively help agents conserve tokens.
+
+- Every read-oriented command (`ls`, `tail`, and `schema`) must support `--fields`.
+- Every read-oriented command must support `--page`, `--page-size`, and `--page-all`.
+- In `json` mode, paginated read commands return a single object that contains page metadata plus the filtered items for the requested page or all pages.
+- In `ndjson` mode with `--page-all`, read commands emit one page envelope per line so an agent can process each page incrementally.
+- Repository agent docs and skills must instruct agents to prefer `--fields` and narrow selectors before requesting full results.
 
 ### Machine-readable output
 
@@ -63,6 +136,8 @@ Machine-readable output is a required CLI contract, not a debug-only feature.
 - `ndjson` emits one JSON object per event or record and is the preferred format for streaming commands such as the main loop and `tail --follow`.
 - Errors must remain structured in `json` and `ndjson` modes. Do not fall back to prose-only stderr for machine-readable modes.
 - Shared fields such as `command`, `status`, `error`, `phase`, `iteration`, `event`, `ts`, `worktree_path`, and `work_branch` should keep stable names and meanings across commands.
+- If `--output-file` is used, stdout must remain parseable by printing either nothing or a minimal machine-readable receipt; the file content must match the requested `--output` format.
+- `--output-file` paths must be sandboxed to the caller's current working directory and rejected if they escape it.
 
 Recommended behavior:
 
@@ -207,6 +282,45 @@ Additional requirements:
 - It must not require interactive input.
 - Exit code `0` on success and non-zero on any failure.
 - All output except the final success JSON goes to stderr so stdout remains parseable.
+- `--dry-run` must validate inputs, resolve the repo root, derive the target worktree and runtime paths, and return a machine-readable execution plan without performing filesystem writes, git mutations, dependency installs, or builds.
+
+### Input hardening and security posture
+
+The CLI must defend against agent mistakes as an explicit design goal.
+
+- Treat the agent as untrusted input. Document this security posture in repository agent docs.
+- Reject control characters in resource identifiers, selectors, branch names, and output-file paths.
+- Reject path traversal patterns such as `../`, `..\`, and their percent-encoded forms.
+- Reject embedded query fragments such as `?`, `#`, and percent-encoded `?` or `#` in selectors and file-like identifiers.
+- Reject double-encoded and percent-encoded path separators in selectors and file-like identifiers.
+- Percent-encode identifiers when constructing any downstream path- or URL-like transport representation.
+- Constrain any user-provided output file path to the current working directory after symlink resolution.
+
+### Safety rails
+
+Mutating commands must provide preflight validation and sanitize untrusted data.
+
+- Every mutating command must support `--dry-run`.
+- `--dry-run` must return the exact request shape the command would execute plus a list of planned side effects.
+- Any untrusted data returned from downstream systems, logs, or agent messages must be sanitized before being rendered in text mode or copied into structured summaries.
+- Sanitization must at minimum remove control characters, neutralize obvious prompt-injection markers, and record whether sanitization changed the payload.
+
+### Agent knowledge packaging
+
+The repository must ship agent-consumable knowledge alongside the CLI.
+
+- Add an `AGENTS.md` at the repository root that explains the supported agent-first surfaces and guardrails.
+- Add a versioned, discoverable skill library in-repo using YAML frontmatter plus Markdown, with at least:
+  - one skill for safe execution of the main loop,
+  - one skill for `init`,
+  - one skill for log inspection with `tail`,
+  - one skill for session discovery with `ls`,
+  - one skill for schema introspection.
+- The docs must explicitly instruct agents to:
+  - start with `ralph-loop schema`,
+  - prefer `--dry-run` before mutating commands,
+  - prefer `--fields` and narrow selectors on read commands,
+  - use `--output json` or `--output ndjson` instead of text.
 
 ---
 
