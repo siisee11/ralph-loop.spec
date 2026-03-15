@@ -307,9 +307,9 @@ internal/ralphloop/          # reusable orchestration, client, logging, tail/ls 
 
 Use the provided Go reference implementation under:
 
-- `../references/cmd/ralph-loop/`
-- `../references/internal/ralphloop/`
-- `../references/ralph-loop`
+- `references/cmd/ralph-loop/`
+- `references/internal/ralphloop/`
+- `references/ralph-loop`
 
 Copy those into the matching repository paths, then adapt them to the target repository's Go module path, prompts, verification flow, and CI wiring.
 
