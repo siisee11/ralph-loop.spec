@@ -1,2 +1,0 @@
-ralph-loop:
-	go run ./cmd/ralph-loop --help
