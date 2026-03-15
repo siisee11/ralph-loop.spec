@@ -14,7 +14,8 @@ import (
 )
 
 const (
-	MainUsage = "Usage: ralph-loop \"<user prompt>\" [options]\n       ralph-loop tail [selector] [--lines N] [--follow] [--raw] [--output <format>]\n       ralph-loop ls [selector] [--output <format>]"
+	MainUsage = "Usage: ralph-loop init [--base-branch <branch>] [--work-branch <name>] [--output <format>]\n       ralph-loop \"<user prompt>\" [options]\n       ralph-loop tail [selector] [--lines N] [--follow] [--raw] [--output <format>]\n       ralph-loop ls [selector] [--output <format>]"
+	InitUsage = "Usage: ralph-loop init [--base-branch <branch>] [--work-branch <name>] [--output <format>]"
 	TailUsage = "Usage: ralph-loop tail [selector] [--lines N] [--follow] [--raw] [--output <format>]"
 	ListUsage = "Usage: ralph-loop ls [selector] [--output <format>]"
 )
@@ -33,6 +34,7 @@ func IsUsageError(err error) bool {
 }
 
 var (
+	runInitFn = runInitCommand
 	runMainFn = runMain
 	runTailFn = runTailCommand
 	runListFn = runListCommand
@@ -50,7 +52,7 @@ func Run(args []string, cwd string, stdout io.Writer, stderr io.Writer) int {
 	command, err := ParseCommand(args, repoRoot, outputMode)
 	if err != nil {
 		commandName := string(CommandMain)
-		if len(args) > 0 && (args[0] == "tail" || args[0] == "ls") {
+		if len(args) > 0 && (args[0] == "init" || args[0] == "tail" || args[0] == "ls") {
 			commandName = args[0]
 		}
 		renderCommandError(outputMode, stdout, stderr, commandName, normalizeCommandError(err, "invalid_arguments"))
@@ -58,6 +60,15 @@ func Run(args []string, cwd string, stdout io.Writer, stderr io.Writer) int {
 	}
 
 	switch command.Kind {
+	case CommandInit:
+		if err := runInitFn(context.Background(), repoRoot, command.InitOptions, stdout, stderr); err != nil {
+			if isRenderedError(err) {
+				return 1
+			}
+			renderCommandError(command.InitOptions.Output, stdout, stderr, string(CommandInit), normalizeCommandError(err, "init_failed"))
+			return 1
+		}
+		return 0
 	case CommandTail:
 		if err := runTailFn(context.Background(), repoRoot, command.TailOptions, stdout, stderr); err != nil {
 			renderCommandError(command.TailOptions.Output, stdout, stderr, string(CommandTail), normalizeCommandError(err, "tail_failed"))
@@ -101,6 +112,13 @@ func ResolveRepoRoot(cwd string) (string, error) {
 }
 
 func ParseCommand(args []string, repoRoot string, defaultOutput OutputFormat) (ParsedCommand, error) {
+	if len(args) > 0 && args[0] == "init" {
+		options, err := ParseInitArgs(args[1:], defaultOutput)
+		if err != nil {
+			return ParsedCommand{}, err
+		}
+		return ParsedCommand{Kind: CommandInit, InitOptions: options}, nil
+	}
 	if len(args) > 0 && args[0] == "tail" {
 		options, err := ParseTailArgs(args[1:], defaultOutput)
 		if err != nil {
@@ -121,6 +139,53 @@ func ParseCommand(args []string, repoRoot string, defaultOutput OutputFormat) (P
 		return ParsedCommand{}, err
 	}
 	return ParsedCommand{Kind: CommandMain, MainOptions: options}, nil
+}
+
+func ParseInitArgs(args []string, defaultOutput OutputFormat) (InitOptions, error) {
+	options := InitOptions{
+		BaseBranch: "main",
+		Output:     defaultOutput,
+	}
+
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch arg {
+		case "--help", "-h":
+			return InitOptions{}, &usageError{message: InitUsage}
+		case "--base-branch":
+			value, err := requireValue(args, &index, "--base-branch")
+			if err != nil {
+				return InitOptions{}, err
+			}
+			options.BaseBranch = strings.TrimSpace(value)
+		case "--work-branch":
+			value, err := requireValue(args, &index, "--work-branch")
+			if err != nil {
+				return InitOptions{}, err
+			}
+			options.WorkBranch = sanitizeBranchName(value)
+			if options.WorkBranch == "" {
+				return InitOptions{}, fmt.Errorf("invalid value for --work-branch: %s", value)
+			}
+		case "--output":
+			value, err := requireValue(args, &index, "--output")
+			if err != nil {
+				return InitOptions{}, err
+			}
+			format, err := parseOutputFormat(value)
+			if err != nil {
+				return InitOptions{}, err
+			}
+			options.Output = format
+		default:
+			return InitOptions{}, &usageError{message: InitUsage}
+		}
+	}
+
+	if options.BaseBranch == "" {
+		options.BaseBranch = "main"
+	}
+	return options, nil
 }
 
 func ParseMainArgs(args []string, _ string, defaultOutput OutputFormat) (MainOptions, error) {

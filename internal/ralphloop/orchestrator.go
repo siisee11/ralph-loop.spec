@@ -27,6 +27,7 @@ func runMain(ctx context.Context, repoRoot string, options MainOptions, stdout i
 		BaseBranch:   options.BaseBranch,
 		WorkBranch:   options.WorkBranch,
 		WorktreeName: worktreeName,
+		StatusWriter: stderr,
 	})
 	if err != nil {
 		return err

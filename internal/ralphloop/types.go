@@ -5,6 +5,7 @@ import "time"
 type CommandKind string
 
 const (
+	CommandInit CommandKind = "init"
 	CommandMain CommandKind = "main"
 	CommandTail CommandKind = "tail"
 	CommandList CommandKind = "ls"
@@ -31,6 +32,12 @@ type MainOptions struct {
 	Output           OutputFormat
 }
 
+type InitOptions struct {
+	BaseBranch string
+	WorkBranch string
+	Output     OutputFormat
+}
+
 type TailOptions struct {
 	Lines    int
 	Follow   bool
@@ -46,9 +53,24 @@ type ListOptions struct {
 
 type ParsedCommand struct {
 	Kind        CommandKind
+	InitOptions InitOptions
 	MainOptions MainOptions
 	TailOptions TailOptions
 	ListOptions ListOptions
+}
+
+type initResult struct {
+	Command       string        `json:"command"`
+	Status        string        `json:"status"`
+	WorktreeID    string        `json:"worktree_id,omitempty"`
+	WorktreePath  string        `json:"worktree_path,omitempty"`
+	WorkBranch    string        `json:"work_branch,omitempty"`
+	BaseBranch    string        `json:"base_branch,omitempty"`
+	DepsInstalled bool          `json:"deps_installed,omitempty"`
+	BuildVerified bool          `json:"build_verified,omitempty"`
+	RuntimeRoot   string        `json:"runtime_root,omitempty"`
+	Events        []eventRecord `json:"events,omitempty"`
+	Error         *commandError `json:"error,omitempty"`
 }
 
 type commandError struct {

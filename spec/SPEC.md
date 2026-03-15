@@ -182,7 +182,7 @@ The command must perform the following steps in order:
 1. **Create or reuse a git worktree**: If already inside a worktree, reuse it. Otherwise, create a new worktree using `git worktree add` from the specified base branch (default: `main`). Derive the worktree path using the same convention as `scripts/lib/worktree.sh`.
 2. **Clean git state**: Inside the worktree, ensure a clean working tree. Stash any uncommitted changes. Create and checkout the work branch if specified.
 3. **Install dependencies**: Run the project's package install or fetch commands. Detect the project type from files such as `package.json`, `bun.lockb`, `Cargo.toml`, or equivalent. Fail clearly if install fails.
-4. **Verify build**: Run `make smoke` if `Makefile.harness` exists. Otherwise, run the project's default build or smoke command. If verification fails, exit non-zero with a diagnostic message.
+4. **Verify build**: Run the project's default build or smoke command based on repository type, such as `go test ./...`, `cargo build`, or `npm run build`. If verification fails, exit non-zero with a diagnostic message.
 5. **Set up environment config**: If `.env.example` exists and `.env` does not, copy it. Set `DISCODE_WORKTREE_ID` and any other worktree-derived env vars required by the project.
 6. **Create runtime directories**: Ensure `.worktree/<worktree_id>/logs/`, `.worktree/<worktree_id>/tmp/`, and any other runtime dirs needed by boot or observability exist.
 
@@ -525,9 +525,8 @@ The built harness also benefited from:
 - In `json` mode, buffer command progress internally and emit exactly one final object.
 - Keep stderr human-oriented only in `text` mode. In machine-readable modes, encode errors in stdout JSON and keep stderr empty unless the process itself cannot initialize.
 
-### Integration with harness
+### Integration
 
-- Add a `Makefile.harness` target for `ralph-loop`.
 - Keep `./ralph-loop` as the documented command even if the underlying implementation is `go run` during early bring-up.
 
 ---
@@ -549,7 +548,6 @@ The built harness also benefited from:
 - [ ] Structured JSON errors in machine-readable modes
 - [ ] Tests for CLI parsing, app-server client behavior, completion detection, and prompt construction
 - [ ] Tests covering `json` and `ndjson` output contracts, including non-TTY defaulting
-- [ ] `Makefile.harness` target for `ralph-loop`
 
 ---
 
