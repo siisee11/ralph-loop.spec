@@ -665,6 +665,61 @@ The built harness also benefited from:
 
 ---
 
+## Formal Verification with TLA+
+
+The spec ships with TLA+ models under `spec/references/tla/` that formally verify critical safety and liveness properties of the Ralph Loop workflow. Implementations must satisfy the properties defined in these models.
+
+### Models
+
+| Module | Scope | What it verifies |
+|--------|-------|------------------|
+| `RalphLoopMain` | Three-phase workflow | Phase ordering (idle → init → setup → coding → pr → completed\|failed), termination guarantee, iteration bounds, PR requires completion signal |
+| `CodingLoop` | Inner coding loop | Turn lifecycle, context overflow triggers compaction, recovery prompt after failure, same thread across all iterations, loop always terminates |
+| `ConcurrentSessions` | Multi-session isolation | No two sessions share a worktree or port, running sessions always hold resources, terminated sessions leak no resources |
+
+### Key properties
+
+Safety (nothing bad happens):
+
+- **Phase ordering**: phases only transition forward; preconditions (worktree ready, plan exists) are satisfied before entering each phase.
+- **Iteration bound**: iteration count never exceeds `MaxIterations`.
+- **PR requires completion**: a pull request is only created after the coding loop signals `<promise>COMPLETE</promise>`.
+- **Worktree exclusion**: no two concurrent sessions share the same worktree slot or port.
+- **Same thread**: the coding loop uses exactly one Codex thread across all iterations.
+- **No resource leak**: terminated or failed sessions release all claimed worktrees and ports.
+
+Liveness (good things eventually happen):
+
+- **Termination**: every workflow run eventually reaches `completed` or `failed`.
+- **Coding loop ends**: the coding phase always terminates — via completion signal, max iterations, or consecutive failure cap.
+- **Compaction resolves**: context window overflow triggers compaction, which always completes.
+- **Turn always ends**: every started Codex turn reaches a terminal state (completed, failed, or timed out).
+- **Resources freed**: all worktree slots and ports are eventually released.
+
+### Running the model checker
+
+```bash
+brew install tlaplus
+cd spec/references/tla
+tlc RalphLoopMain.tla
+tlc CodingLoop.tla
+tlc ConcurrentSessions.tla
+```
+
+Each `.cfg` file uses small constants to keep model checking fast. Increase constants to explore deeper state spaces when needed.
+
+### Verification against implementation
+
+When implementing Ralph Loop, verify that:
+
+1. The state machine in the orchestrator matches the phase transitions in `RalphLoopMain`.
+2. The coding loop driver matches the turn lifecycle, failure recovery, and compaction behavior in `CodingLoop`.
+3. Session registration and worktree/port allocation match the resource exclusion guarantees in `ConcurrentSessions`.
+4. All safety invariants hold as runtime assertions or are structurally guaranteed by the code.
+5. All liveness properties are ensured by bounded loops, timeouts, and resource cleanup in defer/finally blocks.
+
+---
+
 ## Verification
 
 1. Run `ralph-loop init --base-branch main --work-branch ralph-init-smoke` from outside the repo root and confirm it succeeds.
