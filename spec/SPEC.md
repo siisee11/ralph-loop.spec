@@ -54,7 +54,7 @@ Main options:
   --base-branch <branch>   Branch to create the worktree from (default: main)
   --max-iterations <n>     Safety cap on coding loop iterations (default: 20)
   --work-branch <name>     Name for the working branch (default: ralph-<slugified-prompt>)
-  --timeout <seconds>      Max wall-clock time for entire run (default: 21600 = 6h)
+  --timeout <seconds>      Max wall-clock time for entire run (default: 43200 = 12h)
   --approval-policy <p>    Codex approval policy (default: never)
   --sandbox <policy>       Codex sandbox policy (default: workspace-write)
   --preserve-worktree      Keep the generated worktree on exit for debugging
@@ -559,7 +559,7 @@ Compatibility note:
 
 - If `turn/completed` has `status: "failed"` with `codexErrorInfo: "ContextWindowExceeded"`, call `thread/compact/start` and retry.
 - If app-server process exits unexpectedly, restart it and resume the thread with `thread/resume`.
-- If a turn takes longer than a per-turn timeout (configurable, default 30 minutes), send `turn/interrupt` and retry.
+- If a turn takes longer than a per-turn timeout (configurable, default 2 hours), send `turn/interrupt` and retry.
 
 ---
 

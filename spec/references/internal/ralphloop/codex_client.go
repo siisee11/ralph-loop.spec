@@ -213,7 +213,7 @@ func (client *appServerClient) StartThread(ctx context.Context, options startThr
 func (client *appServerClient) RunTurn(ctx context.Context, options runTurnOptions) (turnResult, error) {
 	timeout := options.Timeout
 	if timeout <= 0 {
-		timeout = 30 * time.Minute
+		timeout = 2 * time.Hour
 	}
 	requestCtx := ctx
 	var cancel context.CancelFunc

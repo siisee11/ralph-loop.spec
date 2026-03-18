@@ -245,7 +245,7 @@ func ParseMainArgs(args []string, defaultOutput OutputFormat) (MainOptions, erro
 		Model:          "gpt-5.3-codex",
 		BaseBranch:     "main",
 		MaxIterations:  20,
-		TimeoutSeconds: 21600,
+		TimeoutSeconds: 43200,
 		ApprovalPolicy: "never",
 		Sandbox:        "workspace-write",
 		Output:         defaultOutput,

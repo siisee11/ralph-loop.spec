@@ -23,6 +23,9 @@ func TestParseMainArgsDefaults(t *testing.T) {
 	if options.WorkBranch != "ralph-ship-feature" {
 		t.Fatalf("expected default branch, got %s", options.WorkBranch)
 	}
+	if options.TimeoutSeconds != 43200 {
+		t.Fatalf("expected default timeout 43200, got %d", options.TimeoutSeconds)
+	}
 }
 
 func TestParseInitArgsDefaults(t *testing.T) {

@@ -58,8 +58,8 @@ func runMain(ctx context.Context, repoRoot string, options MainOptions, stdout i
 	sandbox := resolveSandbox(options.Sandbox, worktree.WorktreePath)
 	prSandbox := resolvePrSandbox(options.Sandbox, worktree.WorktreePath)
 	turnTimeout := time.Duration(options.TimeoutSeconds) * time.Second
-	if turnTimeout <= 0 || turnTimeout > 30*time.Minute {
-		turnTimeout = 30 * time.Minute
+	if turnTimeout <= 0 || turnTimeout > 2*time.Hour {
+		turnTimeout = 2 * time.Hour
 	}
 	var runSpan *ralphTelemetrySpan
 	if telemetry != nil {
