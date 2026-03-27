@@ -4,5 +4,6 @@
 
 # Ralph Loop
 
-Spec-first CLI for preparing worktrees, running the coding loop, and inspecting active Ralph Loop sessions.
+This spec is deprecated.
 
+Use [WhatTheLoop](https://wtl.spechub.org/) with the Ralph policy instead.
