@@ -1,31 +1,55 @@
 # Ralph Loop Spec
 
-Build a Go CLI that drives a coding agent through a complete task lifecycle in an automated loop. The CLI uses Codex app-server (via stdio JSON-RPC) to spawn and control agents. The name comes from the "Ralph Wiggum Loop" pattern: the agent keeps working until it declares the task complete.
+Build a Go CLI that realizes the Ralph Wigum policy from What The Loop for a repository-oriented coding workflow. The CLI uses Codex app-server (via stdio JSON-RPC) to spawn and control agents, but the workflow semantics come from WTL rather than from a Ralph Loop-specific state machine.
+
+## Prerequisite: What The Loop
+
+`ralph-loop.spec` is downstream of `what-the-loop.spec` and must be implemented on top of WTL's engine-policy contract.
+
+- Canonical upstream spec: `https://github.com/siisee11/what-the-loop.spec`
+- Local checkout used while authoring this spec: `~/git/what-the-loop.spec/`
+- Normative policy reference: `wtl_policy_ralph_wigum.qnt`
+- Normative engine contract reference: `wtl_engine.qnt`
+
+This repository specifies Ralph-specific host behavior on top of WTL:
+
+- Git worktree preparation
+- Repository plan-file conventions
+- Codex prompt construction
+- Delivery and review markers
+- Pull-request automation
+- Operational commands such as `init`, `ls`, `tail`, and `schema`
 
 ## Overview
 
-The Ralph Loop has three phases:
+Ralph Loop must follow the Ralph Wigum phase order defined by WTL:
 
-1. **Setup Agent** — Runs `ralph-loop init` to prepare a clean worktree, explores the codebase, and creates an execution plan.
-2. **Coding Agent Loop** — Iterates the coding agent with the user's prompt until the agent signals completion. Each iteration commits changes.
-3. **PR Agent** — Reads the commits and completed plan, then opens a pull request.
+1. **Init** — Prepare or reuse the worktree by running `ralph-loop init`. Planning must not begin before this phase succeeds.
+2. **Planning** — Explore the codebase and create the execution plan. Implementing must not begin before a plan exists.
+3. **Implementing** — Iterate the implementation agent with one milestone per turn. This phase may `continue`, `retry`, `compact`, or `advance_phase` to review when delivery is complete.
+4. **Review** — Validate the completed delivery, move the plan, open or update the PR, and only then signal final completion.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                         Ralph Loop                              │
 │                                                                 │
-│  ┌──────────┐    ┌────────────────────┐    ┌────────────┐       │
-│  │  Setup   │───▶│  Coding Agent Loop │───▶│  PR Agent  │       │
-│  │  Agent   │    │  (repeat until     │    │  (commits  │       │
-│  │          │    │   COMPLETE)        │    │   → PR)    │       │
-│  └──────────┘    └────────────────────┘    └────────────┘       │
+│  idle → init → planning → implementing → review → completed     │
 │                                                                 │
-│  runs init      commit per iteration       commits → PR         │
-│  explores repo   one milestone per turn                         │
-│  creates plan    <promise>COMPLETE</promise> = done             │
-│                  plan progress updated                          │
+│  init: run `ralph-loop init`                                    │
+│  planning: create committed plan                                │
+│  implementing: one milestone + one commit per iteration         │
+│  review: validate delivery, create/update PR, then complete     │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+WTL directive mapping in this host:
+
+- `advance_phase`: init → planning, planning → implementing, implementing → review
+- `continue`: keep iterating inside implementing on the current thread
+- `retry`: run a recovery turn inside implementing after a failed turn
+- `compact`: compact the implementation thread when context is exhausted
+- `complete`: review accepted the delivery and the host may terminate successfully
+- `wait`: reserved for external blocking cases such as login or explicit operator input
 
 ---
 
@@ -52,7 +76,7 @@ Global agent-first options:
 Main options:
   --model <model>          Codex model to use (default: gpt-5.3-codex)
   --base-branch <branch>   Branch to create the worktree from (default: main)
-  --max-iterations <n>     Safety cap on coding loop iterations (default: 20)
+  --max-iterations <n>     Safety cap on implementation iterations (default: 20)
   --work-branch <name>     Name for the working branch (default: ralph-<slugified-prompt>)
   --timeout <seconds>      Max wall-clock time for entire run (default: 43200 = 12h)
   --approval-policy <p>    Codex approval policy (default: never)
@@ -144,7 +168,7 @@ Recommended behavior:
 - `ralph-loop init --output json` returns a single object with worktree metadata, install/build status, runtime root, and any structured error.
 - `ralph-loop init` in default `text` mode still reserves stdout for the final success JSON object; progress and diagnostics go to stderr.
 - `ralph-loop init --output ndjson` may emit structured step events and must end with a terminal record containing the same metadata as the JSON mode success object.
-- `ralph-loop "<prompt>" --output json` returns a single object describing the run result, including final status, worktree metadata, iteration count, plan path, PR URL if created, and any structured error.
+- `ralph-loop "<prompt>" --output json` returns a single object describing the run result, including final status, current or final phase, worktree metadata, iteration count, plan path, PR URL if created, and any structured error.
 - `ralph-loop "<prompt>" --output ndjson` streams lifecycle events as they happen and ends with a terminal event.
 - `ralph-loop ls --output json` returns a JSON array of running sessions.
 - `ralph-loop ls --output ndjson` emits one session object per line.
@@ -155,9 +179,10 @@ Example NDJSON events:
 
 ```json
 {"command":"main","event":"run.started","status":"running","ts":"2026-03-15T12:00:00Z","worktree_path":"/repo/.worktrees/ralph-foo","work_branch":"ralph-foo"}
-{"command":"main","event":"phase.started","phase":"setup","status":"running","ts":"2026-03-15T12:00:01Z"}
-{"command":"main","event":"iteration.completed","phase":"coding","iteration":1,"status":"ok","commit":"abc1234","ts":"2026-03-15T12:03:10Z"}
-{"command":"main","event":"run.completed","status":"completed","iterations":3,"plan_path":"/repo/docs/exec-plans/completed/foo.md","pr_url":"https://github.com/org/repo/pull/123","ts":"2026-03-15T12:14:22Z"}
+{"command":"main","event":"phase.started","phase":"planning","status":"running","ts":"2026-03-15T12:00:01Z"}
+{"command":"main","event":"iteration.completed","phase":"implementing","iteration":1,"status":"ok","commit":"abc1234","ts":"2026-03-15T12:03:10Z"}
+{"command":"main","event":"phase.started","phase":"review","status":"running","ts":"2026-03-15T12:12:00Z"}
+{"command":"main","event":"run.completed","phase":"review","status":"completed","iterations":3,"plan_path":"/repo/docs/exec-plans/completed/foo.md","pr_url":"https://github.com/org/repo/pull/123","ts":"2026-03-15T12:14:22Z"}
 ```
 
 Example structured error:
@@ -167,8 +192,8 @@ Example structured error:
   "command": "main",
   "status": "failed",
   "error": {
-    "code": "setup_failed",
-    "message": "setup agent completed without the required completion token"
+    "code": "planning_failed",
+    "message": "planning phase completed without producing a committed execution plan"
   }
 }
 ```
@@ -177,7 +202,7 @@ Example structured error:
 
 ## Worktree-Aware Boot Architecture
 
-The repository must expose a worktree-aware app boot flow that lets one coding agent launch one isolated app instance per worktree or change.
+The repository must expose a worktree-aware app boot flow that lets the active implementation thread launch one isolated app instance per worktree or change.
 
 ### Boot strategy
 
@@ -228,7 +253,7 @@ The repository must expose a worktree-aware app boot flow that lets one coding a
 
 ## Coding Agent Launch Contract
 
-Ralph Loop depends on a stable boot contract so the coding agent can launch exactly one app instance per worktree.
+Ralph Loop depends on a stable boot contract so the implementation and review phases can launch exactly one app instance per worktree when needed.
 
 - Provide a command or script intended for automation use.
 - Startup must block until the app is actually ready.
@@ -324,95 +349,108 @@ The repository must ship agent-consumable knowledge alongside the CLI.
 
 ---
 
-## Phase 1: Setup Agent
+## Phase 1: Init
 
-Spawn a Codex agent via app-server with the following task prompt. This agent runs once, not in a loop. It initializes the environment using `ralph-loop init` and then creates an execution plan.
+The init phase is Ralph Loop's concrete realization of the WTL `init` phase.
+It prepares the worktree and runtime contract before any planning turn starts.
 
-### Setup agent prompt
+### Init phase behavior
 
-```
-You are the setup agent for an automated coding loop. Prepare the environment and create an execution plan for the following task:
-
-Task: {user_prompt}
-
-Do the following steps in order:
-
-1. **Initialize the environment**: Run `./ralph-loop init --base-branch {base_branch} --work-branch {work_branch}`. This command creates or reuses the worktree, installs dependencies, verifies the build, prepares runtime directories, and outputs JSON to stdout. Capture and verify it succeeds. If it fails, diagnose the error and retry once. If it fails again, stop and report the error.
-
-2. **Explore the codebase**: Read `AGENTS.md`, `ARCHITECTURE.md`, and any relevant docs to understand the project structure and conventions.
-
-3. **Create execution plan**: Read `docs/PLANS.md` for the plan template. Create a new plan file at `docs/exec-plans/active/{slugified_task_name}.md` with the following structure:
-   - **Goal / scope**: What the task accomplishes
-   - **Background**: Why this work is needed
-   - **Milestones**: Break the task into 3-7 concrete milestones. Each milestone should be completable in a single agent iteration.
-   - **Current progress**: Mark all milestones as "not started"
-   - **Key decisions**: Leave empty for now (the coding agent will fill this in)
-   - **Remaining issues / open questions**: Any blockers or unknowns you identified during exploration
-   - **Links to related documents**: Link to relevant docs discovered during exploration
-
-4. **Commit the plan**: Stage and commit the plan file with message `plan: {short_task_description}`.
-
-5. **Output the plan file path**: Print the absolute path to the plan file.
-
-Output <promise>COMPLETE</promise> when done.
-```
-
-### Setup agent behavior
-
-- Start a Codex app-server process via stdio.
-- Send `initialize` → `initialized` → `thread/start` → `turn/start` with the setup prompt.
-- Stream events and wait for `turn/completed`.
-- Parse the plan file path from the agent's output.
-- Parse the `ralph-loop init` success JSON to obtain the worktree path, worktree ID, work branch, base branch, and runtime root for later phases.
-- If the agent fails or the turn completes without `<promise>COMPLETE</promise>`, abort with an error.
+- Run `./ralph-loop init --base-branch {base_branch} --work-branch {work_branch}` directly from the host.
+- Parse the success JSON to obtain the worktree path, worktree ID, work branch, base branch, and runtime root.
+- If init fails, diagnose and retry once only if the failure is clearly recoverable.
+- Planning must not begin until init succeeds.
+- A successful init issues the WTL-equivalent `advance_phase` into planning.
 
 ---
 
-## Phase 2: Coding Agent Loop
+## Phase 2: Planning
 
-Spawn a new Codex thread for the coding agent. This thread persists across iterations — each iteration is a new turn on the same thread.
+Spawn a fresh Codex thread for planning. This thread is distinct from the implementation thread.
 
-### Coding agent prompt (same prompt every iteration)
-
-The same prompt is sent on every turn. The agent reads the plan file each time to determine current progress and what to do next.
+### Planning prompt
 
 ```
-You are a coding agent working in an automated loop. You will iterate until the task is fully complete.
+You are the planning agent for a Ralph Loop run that follows the WTL Ralph Wigum policy.
+
+## Task
+{user_prompt}
+
+## Context
+- The worktree is already initialized at `{worktree_path}`.
+- Your job in this phase is to understand the repository, create the execution plan, and stop.
+- Do not start implementing milestones in this phase.
+
+## Instructions
+
+1. Read `AGENTS.md`, `ARCHITECTURE.md`, and any relevant repository docs.
+2. Read `docs/PLANS.md` if it exists and follow the local plan template.
+3. Create `docs/exec-plans/active/{slugified_task_name}.md` with:
+   - Goal / scope
+   - Background
+   - Milestones
+   - Current progress
+   - Key decisions
+   - Remaining issues / open questions
+   - Links to related documents
+4. Break the work into 3-7 milestones. Each milestone must be completable in a single implementation iteration.
+5. Mark every milestone as `not started`.
+6. Stage and commit the new plan with message `plan: {short_task_description}`.
+7. Print the absolute plan path.
+
+Output <promise>PLAN_READY</promise> when the committed plan is ready for implementation.
+```
+
+### Planning behavior
+
+- Start a Codex app-server thread and send the planning prompt as one turn.
+- Parse the plan file path from the agent output.
+- Require a committed plan before advancing.
+- If the turn fails or ends without `<promise>PLAN_READY</promise>`, abort with an error.
+- A successful planning turn issues the WTL-equivalent `advance_phase` into implementing.
+
+---
+
+## Phase 3: Implementing
+
+Spawn a new Codex thread for the implementation loop. This thread persists across iterations; each iteration is a new turn on the same thread until the policy advances to review.
+
+### Implementation prompt
+
+The same prompt is sent on every implementation turn. The plan file on disk is the source of truth for progress.
+
+```
+You are the implementation agent for a Ralph Loop run that follows the WTL Ralph Wigum policy.
 
 ## Task
 {user_prompt}
 
 ## Execution plan
-Read the plan at `{plan_file_path}` to understand the milestones and current progress. Pick up where the last iteration left off.
+Read the plan at `{plan_file_path}` to determine the next milestone and current progress.
 
 ## Rules
-- **One milestone per iteration.** Complete exactly one milestone, then stop. Do not work on multiple milestones in a single iteration. This keeps commits focused, progress trackable, and makes it easy to revert a single unit of work.
-- Work through the milestones in the plan sequentially.
-- After completing the milestone, update the plan file:
-  - Mark the completed milestone as "done"
-  - Update "current progress" with what you accomplished
-  - Add any key decisions you made
-  - Note any remaining issues
-- Stage and commit ALL your changes (code + updated plan) with a descriptive commit message.
-- If you encounter a blocker you cannot resolve, document it in the plan under "remaining issues" and commit what you have.
+- Complete exactly one milestone per iteration.
+- Work through milestones sequentially unless the plan explicitly says otherwise.
+- After finishing the milestone, update the plan:
+  - mark the milestone as `done`
+  - update current progress
+  - record key decisions
+  - record remaining issues or follow-ups
+- Stage and commit all changes from the iteration, including plan updates.
+- If you hit a blocker you cannot fully resolve, document it in the plan and commit the best safe progress you can.
 
-## Completion signal
-When ALL milestones in the plan are complete and the task is fully done:
-- Do a final update of the plan marking everything complete
-- Commit all remaining changes
-- Output <promise>COMPLETE</promise>
-
-If there is still work to do after this iteration, do NOT output <promise>COMPLETE</promise>. You will get another iteration.
+## Delivery gating
+- Do not declare the run complete from this phase.
+- When all planned implementation work is done and the branch is ready for review, output <promise>DELIVERY_COMPLETE</promise>.
+- If more work remains after this iteration, do not output the delivery marker.
 ```
 
-### Loop driver logic
-
-The loop sends the exact same prompt on every iteration. The plan file on disk is the source of truth for progress — the agent reads it at the start of each turn to know where to pick up.
+### Implementation loop driver
 
 ```
 thread_id = start_thread()
 iteration = 0
-prompt = coding_agent_prompt  # same prompt every time
+prompt = implementation_prompt
 
 while iteration < max_iterations:
     iteration += 1
@@ -422,53 +460,50 @@ while iteration < max_iterations:
 
     if turn_failed(result):
         if iteration < max_iterations:
-            # Send a recovery turn
-            start_turn(thread_id, "The previous iteration failed. Check git status, review any errors, and try again. If the build is broken, fix it first.")
+            start_turn(thread_id, "The previous implementation iteration failed. Check git status, inspect errors, repair the workspace, and continue from the plan.")
             continue
-        else:
-            abort("Max iterations reached with failures")
+        abort("Max iterations reached during implementing")
 
     agent_output = extract_agent_messages(result)
 
-    if "<promise>COMPLETE</promise>" in agent_output:
+    if "<promise>DELIVERY_COMPLETE</promise>" in agent_output:
+        advance_phase("review")
         break
 
 if iteration >= max_iterations:
-    warn("Reached max iterations without completion signal")
+    warn("Reached max iterations before delivery was ready for review")
 ```
 
-### Key behaviors
+### Implementation behaviors
 
-- **Same thread, multiple turns**: Use a single Codex thread for the entire coding loop. Each iteration is a `turn/start` on the same `threadId`. This preserves conversation context across iterations.
-- **Commit per iteration**: The agent is instructed to commit at the end of each iteration. The loop driver should verify a commit was made (check `git log`) and warn if the agent forgot.
-- **Completion detection**: Scan the agent's text output (from `agentMessage` items in `item/completed` events) for the literal string `<promise>COMPLETE</promise>`.
-- **Failure recovery**: If a turn completes with `status: "failed"`, send a recovery prompt on the next iteration rather than immediately aborting.
-- **Context compaction**: If the thread approaches context limits (watch for `ContextWindowExceeded` errors), call `thread/compact/start` before the next turn.
+- **Same thread, multiple turns**: The implementing phase reuses a single Codex thread across iterations.
+- **Commit per iteration**: Each iteration must leave a new commit or an explicit warning record if the agent failed to create one.
+- **Delivery detection**: Scan `agentMessage` items for the literal string `<promise>DELIVERY_COMPLETE</promise>`.
+- **Failure recovery**: A failed implementation turn maps to WTL `retry` and queues a recovery turn rather than aborting immediately.
+- **Context compaction**: If the thread hits `ContextWindowExceeded`, call `thread/compact/start` and continue inside the same phase.
+- **Review boundary**: Implementation may only advance the run to review; it must never emit final completion.
 
 ---
 
-## Phase 3: PR Agent
+## Phase 4: Review
 
-After the coding loop completes, spawn a separate Codex agent to create the pull request.
+After implementation signals delivery readiness, spawn a separate review thread. Review is the only phase allowed to complete the run.
 
-### PR agent prompt
+### Review prompt
 
 ```
-You are a PR agent. Your job is to create a well-structured pull request from the work done on this branch.
+You are the review agent for a Ralph Loop run that follows the WTL Ralph Wigum policy.
 
 ## Instructions
 
-1. **Read the completed plan**: Read `{plan_file_path}` to understand what was accomplished.
-
-2. **Review the commits**: Run `git log {base_branch}..HEAD --oneline` to see all commits made during the coding loop.
-
-3. **Review the diff**: Run `git diff {base_branch}...HEAD --stat` to see the scope of changes.
-
-4. **Move the plan**: Move the plan from `docs/exec-plans/active/` to `docs/exec-plans/completed/`. Commit this move.
-
-5. **Create the pull request**: Use `gh pr create` with:
-   - **Title**: A concise title (under 70 characters) summarizing the change
-   - **Body**: Use this format:
+1. Read the completed plan at `{plan_file_path}`.
+2. Review the commits with `git log {base_branch}..HEAD --oneline`.
+3. Review the diff with `git diff {base_branch}...HEAD --stat`.
+4. Verify the implementation is actually review-ready. If it is not, explain the gap and do not emit the completion marker.
+5. Move the plan from `docs/exec-plans/active/` to `docs/exec-plans/completed/`. Commit that move.
+6. Create or update the pull request with:
+   - Title: concise and under 70 characters
+   - Body:
      ```
      ## Summary
      <2-4 bullet points summarizing what was done>
@@ -484,25 +519,20 @@ You are a PR agent. Your job is to create a well-structured pull request from th
 
      🤖 Generated with Ralph Loop
      ```
+7. Enable auto-merge with `gh pr merge --auto --squash`.
+8. Wait for CI and report whether the PR merged cleanly or is pending because of failing checks.
+9. Print the PR URL and final review status.
 
-6. **Enable auto-merge**: Run `gh pr merge --auto --squash` to enable auto-merge. This tells GitHub to merge the PR automatically once all required status checks pass.
-
-7. **Wait for CI and merge**: Poll the PR status until it is merged or fails:
-   - Run `gh pr checks <pr_number> --watch` to wait for all CI checks to complete.
-   - If all checks pass, auto-merge will complete automatically. Verify with `gh pr view <pr_number> --json state -q '.state'` — it should be `MERGED`.
-   - If any check fails, report the failing check names and their output. Do NOT force-merge. Instead, output the failure details so a human or follow-up loop can address them.
-
-8. **Output the PR URL and final status** (merged, or pending with failure details).
-
-Output <promise>COMPLETE</promise> when done.
+Output <promise>COMPLETE</promise> only when review is satisfied and the phase is ready to terminate the run successfully.
 ```
 
-### PR agent behavior
+### Review behavior
 
-- Start a new Codex app-server thread (separate from the coding thread).
-- Send the PR prompt as a single turn.
-- Wait for completion.
-- Extract and return the PR URL from the agent's output.
+- Start a fresh Codex thread for review rather than reusing the implementation thread.
+- Send the review prompt as a single turn.
+- Extract and return the PR URL from the agent output.
+- Final completion is valid only when review emits `<promise>COMPLETE</promise>`.
+- If review finds unresolved delivery gaps, the host may fail the run or route back into implementing only if the WTL policy state is explicitly updated to do so.
 
 ---
 
@@ -520,7 +550,7 @@ The script communicates with Codex via the app-server stdio protocol. Reference 
 5. Read:  thread/started notification → extract threadId
 6. Send:  { "method": "turn/start", "id": 2, "params": { "threadId": "<id>", "input": [{ "type": "text", "text": "<prompt>" }] } }
 7. Read:  Stream item/* and turn/* notifications until turn/completed
-8. Repeat step 6-7 for each iteration
+8. Repeat step 4-7 as needed for planning, implementation turns, and review
 ```
 
 Important wire-format note:
@@ -530,13 +560,15 @@ Important wire-format note:
 - Do not send camelCase names like `workspaceWrite` on the wire.
 - The richer object form with `writableRoots` and `networkAccess` belongs to `turn/start` as `sandboxPolicy`, not to `thread/start`.
 
-### Reading agent output
+### Reading control markers
 
-To detect `<promise>COMPLETE</promise>`, collect text from `agentMessage` items:
+Collect text from `agentMessage` items and let the host map markers to WTL directives:
 
 - On `item/completed` where `item.type == "agentMessage"`, read `item.text`.
 - Concatenate all agent message texts from the turn.
-- Search for the literal string `<promise>COMPLETE</promise>`.
+- During planning, search for `<promise>PLAN_READY</promise>`.
+- During implementing, search for `<promise>DELIVERY_COMPLETE</promise>`.
+- During review, search for `<promise>COMPLETE</promise>`.
 
 ### Sandbox policy
 
@@ -591,10 +623,11 @@ Keep the Go implementation split into focused modules:
 
 - CLI parsing and option normalization
 - Codex app-server JSON-RPC client
-- setup-agent orchestration
-- coding-loop orchestration
-- PR-agent orchestration
-- completion detection
+- WTL policy state and directive mapping
+- planning orchestration
+- implementation-loop orchestration
+- review orchestration
+- control-marker detection
 - worktree/init integration
 - log tailing and active-session listing if you expose operational subcommands
 
@@ -621,12 +654,12 @@ The built harness also benefited from:
 - `ralph-loop init` is the canonical environment-preparation entrypoint.
 - The loop driver parses the JSON output from `ralph-loop init` and sets `cwd` for subsequent Codex threads.
 - Worktree-derived runtime paths must live under `.worktree/<worktree_id>/`.
-- Clean up the worktree after the PR is created, unless `--preserve-worktree` is set for debugging.
+- Clean up the worktree after review reaches its terminal state, unless `--preserve-worktree` is set for debugging.
 
 ### Logging
 
 - Log all Codex events to `.worktree/<worktree_id>/logs/ralph-loop.log`.
-- Print high-level status to stdout in `text` mode: phase transitions, iteration counts, commit hashes, completion signal, PR URL.
+- Print high-level status to stdout in `text` mode: phase transitions, iteration counts, commit hashes, delivery marker, completion marker, and PR URL.
 - In `json` and `ndjson` modes, write structured stdout instead of human log lines.
 - On failure, print the last N lines of the log for debugging.
 - Treat log writes as best-effort only; logging must never crash the loop runner.
@@ -653,70 +686,65 @@ The built harness also benefited from:
 - [ ] `ralph-loop init` subcommand with the documented JSON stdout contract
 - [ ] Worktree-aware boot architecture and automation-safe boot command contract
 - [ ] App-server stdio JSON-RPC client
-- [ ] Setup-agent orchestration
-- [ ] Coding-loop orchestration with completion detection
-- [ ] PR-agent orchestration
+- [ ] WTL Ralph policy state machine integration
+- [ ] Planning orchestration
+- [ ] Implementation-loop orchestration with delivery detection
+- [ ] Review orchestration with terminal completion detection
 - [ ] Worktree/init integration that parses the `ralph-loop init` JSON contract
 - [ ] Structured log file under `.worktree/<id>/logs/ralph-loop.log`
 - [ ] Shared `--output text|json|ndjson` contract across `main`, `ls`, and `tail`
 - [ ] Structured JSON errors in machine-readable modes
-- [ ] Tests for CLI parsing, app-server client behavior, completion detection, and prompt construction
+- [ ] Tests for CLI parsing, app-server client behavior, control-marker detection, and prompt construction
 - [ ] Tests covering `json` and `ndjson` output contracts, including non-TTY defaulting
 
 ---
 
-## Formal Verification with TLA+
+## Formal Verification with WTL
 
-The spec ships with TLA+ models under `spec/references/tla/` that formally verify critical safety and liveness properties of the Ralph Loop workflow. Implementations must satisfy the properties defined in these models.
+The normative workflow semantics for Ralph Loop come from WTL's Quint models, not from a Ralph Loop-specific phase machine.
 
-### Models
+### Normative upstream models
 
-| Module | Scope | What it verifies |
-|--------|-------|------------------|
-| `RalphLoopMain` | Three-phase workflow | Phase ordering (idle → init → setup → coding → pr → completed\|failed), termination guarantee, iteration bounds, PR requires completion signal |
-| `CodingLoop` | Inner coding loop | Turn lifecycle, context overflow triggers compaction, recovery prompt after failure, same thread across all iterations, loop always terminates |
-| `ConcurrentSessions` | Multi-session isolation | No two sessions share a worktree or port, running sessions always hold resources, terminated sessions leak no resources |
+| Module | Source | What it verifies |
+|--------|--------|------------------|
+| `wtl_engine.qnt` | `what-the-loop.spec` | Directive contract, turn lifecycle, waiting / compaction / retry mechanics, thread reuse semantics |
+| `wtl_policy_ralph_wigum.qnt` | `what-the-loop.spec` | Ralph phase ordering (`idle → init → planning → implementing → review → completed|failed`), delivery-before-review, explicit completion in review only |
 
-### Key properties
+### Supplementary local models
 
-Safety (nothing bad happens):
+The TLA+ models under `spec/references/tla/` remain useful as local reference material for implementation details such as resource isolation and worktree management, but they are informative only. If a local model disagrees with WTL's Ralph policy, the WTL model wins.
 
-- **Phase ordering**: phases only transition forward; preconditions (worktree ready, plan exists) are satisfied before entering each phase.
-- **Iteration bound**: iteration count never exceeds `MaxIterations`.
-- **PR requires completion**: a pull request is only created after the coding loop signals `<promise>COMPLETE</promise>`.
-- **Worktree exclusion**: no two concurrent sessions share the same worktree slot or port.
-- **Same thread**: the coding loop uses exactly one Codex thread across all iterations.
-- **No resource leak**: terminated or failed sessions release all claimed worktrees and ports.
+### Required properties
 
-Liveness (good things eventually happen):
+Safety:
 
-- **Termination**: every workflow run eventually reaches `completed` or `failed`.
-- **Coding loop ends**: the coding phase always terminates — via completion signal, max iterations, or consecutive failure cap.
-- **Compaction resolves**: context window overflow triggers compaction, which always completes.
-- **Turn always ends**: every started Codex turn reaches a terminal state (completed, failed, or timed out).
-- **Resources freed**: all worktree slots and ports are eventually released.
+- **Phase ordering**: planning requires successful init, implementing requires a committed plan, review requires delivery completion.
+- **Explicit review completion**: final success is only valid when review emits `<promise>COMPLETE</promise>`.
+- **Implementation cannot terminate the run**: `<promise>DELIVERY_COMPLETE</promise>` may advance to review but must not end the run directly.
+- **Iteration bound**: implementation iteration count never exceeds `MaxIterations`.
+- **Thread policy**: implementation reuses its thread across iterations until the policy changes phase or compacts the thread.
+- **Worktree exclusion**: concurrent sessions must not share worktree slots or ports.
 
-### Running the model checker
+Liveness:
 
-```bash
-brew install tlaplus
-cd spec/references/tla
-tlc RalphLoopMain.tla
-tlc CodingLoop.tla
-tlc ConcurrentSessions.tla
-```
+- **Implementation eventually leaves the phase**: via delivery readiness, policy failure, or iteration exhaustion.
+- **Compaction resolves**: context overflow triggers compaction and the run returns to a runnable or terminal state.
+- **Review is terminally decisive**: review either completes the run or reports a non-completable outcome.
+- **Resources freed**: terminated runs eventually release claimed worktrees and ports.
 
-Each `.cfg` file uses small constants to keep model checking fast. Increase constants to explore deeper state spaces when needed.
+### Model checking
+
+When validating the policy semantics, run the Quint models from the upstream repository checkout first. Use the local TLA+ models only as supplementary checks for Ralph-specific host behavior.
 
 ### Verification against implementation
 
 When implementing Ralph Loop, verify that:
 
-1. The state machine in the orchestrator matches the phase transitions in `RalphLoopMain`.
-2. The coding loop driver matches the turn lifecycle, failure recovery, and compaction behavior in `CodingLoop`.
-3. Session registration and worktree/port allocation match the resource exclusion guarantees in `ConcurrentSessions`.
-4. All safety invariants hold as runtime assertions or are structurally guaranteed by the code.
-5. All liveness properties are ensured by bounded loops, timeouts, and resource cleanup in defer/finally blocks.
+1. The orchestrator's phase transitions match `wtl_policy_ralph_wigum.qnt`.
+2. The host honors WTL directives rather than inferring workflow meaning from raw turn status alone.
+3. The implementation loop matches WTL retry and compaction behavior.
+4. Review is the only phase that can convert a successful delivery into terminal completion.
+5. Local worktree and session management still satisfy the supplementary isolation guarantees in `spec/references/tla/`.
 
 ---
 
@@ -727,10 +755,10 @@ When implementing Ralph Loop, verify that:
 3. Confirm running `ralph-loop init` twice on the same worktree is safe and returns the same `worktree_id` and `runtime_root`.
 4. Confirm the boot command for the current worktree returns app metadata, blocks until healthy, and isolates ports and runtime files per worktree.
 5. Run `ralph-loop "Add a health check endpoint that returns { status: 'ok', uptime: <seconds> }"` on the repository.
-6. Confirm the setup agent creates or reuses a clean worktree, installs deps, verifies the build, and produces a plan.
-7. Confirm the coding agent iterates, commits per iteration, and eventually outputs `<promise>COMPLETE</promise>`.
-8. Confirm the PR agent opens a well-formed PR with the plan summary.
-9. Confirm the worktree is cleaned up after completion.
+6. Confirm init completes before planning begins, and that planning produces and commits a plan before implementing starts.
+7. Confirm the implementation agent iterates, commits per iteration, and only advances by emitting `<promise>DELIVERY_COMPLETE</promise>`.
+8. Confirm the review agent opens or updates a well-formed PR with the plan summary and is the only phase that emits `<promise>COMPLETE</promise>`.
+9. Confirm the worktree is cleaned up after the review phase reaches its terminal state.
 10. Confirm `ralph-loop ls --output json` returns valid JSON.
 11. Confirm `ralph-loop tail --follow --output ndjson` emits one JSON object per line.
 12. Confirm piping `ralph-loop "<prompt>"` without `--output` defaults to structured JSON rather than text.
@@ -740,8 +768,9 @@ When implementing Ralph Loop, verify that:
 ## Key Principles
 
 - **One milestone per iteration.** The agent completes exactly one milestone per loop turn. This keeps commits atomic, diffs reviewable, and makes it trivial to revert a single unit of work.
-- **The agent works until it's done.** The loop only breaks on `<promise>COMPLETE</promise>` or the safety cap.
-- **Every iteration leaves a commit.** Progress is never lost, and the PR agent can reconstruct the full story from the commit history.
-- **The plan is the shared state.** The plan file is the coordination artifact between the setup agent, coding agent, and PR agent. It's also a durable record in the repository.
-- **Same thread for the coding loop.** Using one thread with multiple turns preserves context and lets the agent build on its own prior work.
-- **Separate threads for separate roles.** Setup, coding, and PR agents each get their own thread to keep concerns isolated.
+- **WTL owns workflow meaning.** Ralph Loop must not invent a competing local phase machine when WTL already defines the Ralph policy.
+- **Implementation is not completion.** The implementation loop stops only by advancing to review, not by declaring terminal success.
+- **Every iteration leaves a commit.** Progress is never lost, and the review phase can reconstruct the full story from the commit history.
+- **The plan is the shared state.** The plan file coordinates planning, implementing, and review, and remains the durable artifact in the repository.
+- **Same thread for implementation.** Using one thread with multiple turns preserves context inside the implementing phase.
+- **Separate threads for separate phases.** Planning, implementing, and review each get their own thread boundaries when the policy changes phase.
