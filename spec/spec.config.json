@@ -1,0 +1,20 @@
+{
+  "$schema": "https://spechub.dev/schema/spec-config.v1.json",
+  "schema_version": 1,
+  "spec": {
+    "key": "github:siisee11/ralph-loop.spec#spec",
+    "slug": "ralph-loop",
+    "title": "Ralph Loop Spec",
+    "entry": "SPEC.md"
+  },
+  "dependencies": [
+    {
+      "key": "github:siisee11/what-the-loop.spec",
+      "type": "requires",
+      "reason": "Ralph Loop implements the Ralph Wigum policy and engine contract defined by What The Loop."
+    }
+  ],
+  "install": {
+    "include_dependencies": "transitive"
+  }
+}
