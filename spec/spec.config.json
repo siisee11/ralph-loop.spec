@@ -9,9 +9,9 @@
   },
   "dependencies": [
     {
-      "key": "github:siisee11/what-the-loop.spec",
+      "key": "github:siisee11/loop-state-machine.spec",
       "type": "requires",
-      "reason": "Ralph Loop implements the Ralph Wigum policy and engine contract defined by What The Loop."
+      "reason": "Ralph Loop implements the Ralph Wigum policy and engine contract defined by Loop State Machine."
     }
   ],
   "install": {

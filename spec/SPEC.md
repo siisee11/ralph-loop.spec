@@ -1,17 +1,17 @@
 # Ralph Loop Spec
 
-Build a Go CLI that realizes the Ralph Wigum policy from What The Loop for a repository-oriented coding workflow. The CLI uses Codex app-server (via stdio JSON-RPC) to spawn and control agents, but the workflow semantics come from WTL rather than from a Ralph Loop-specific state machine.
+Build a Go CLI that realizes the Ralph Wigum policy from Loop State Machine for a repository-oriented coding workflow. The CLI uses Codex app-server (via stdio JSON-RPC) to spawn and control agents, but the workflow semantics come from LSM rather than from a Ralph Loop-specific state machine.
 
-## Prerequisite: What The Loop
+## Prerequisite: Loop State Machine
 
-`ralph-loop.spec` is downstream of `what-the-loop.spec` and must be implemented on top of WTL's engine-policy contract.
+`ralph-loop.spec` is downstream of `loop-state-machine.spec` and must be implemented on top of LSM's engine-policy contract.
 
-- Canonical upstream spec: `https://github.com/siisee11/what-the-loop.spec`
-- Local checkout used while authoring this spec: `~/git/what-the-loop.spec/`
-- Normative policy reference: `wtl_policy_ralph_wigum.qnt`
-- Normative engine contract reference: `wtl_engine.qnt`
+- Canonical upstream spec: `https://github.com/siisee11/loop-state-machine.spec`
+- Local checkout used while authoring this spec: `~/git/loop-state-machine.spec/`
+- Normative policy reference: `lsm_policy_ralph_wigum.qnt`
+- Normative engine contract reference: `lsm_engine.qnt`
 
-This repository specifies Ralph-specific host behavior on top of WTL:
+This repository specifies Ralph-specific host behavior on top of LSM:
 
 - Git worktree preparation
 - Repository plan-file conventions
@@ -22,7 +22,7 @@ This repository specifies Ralph-specific host behavior on top of WTL:
 
 ## Overview
 
-Ralph Loop must follow the Ralph Wigum phase order defined by WTL:
+Ralph Loop must follow the Ralph Wigum phase order defined by LSM:
 
 1. **Init** — Prepare or reuse the worktree by running `ralph-loop init`. Planning must not begin before this phase succeeds.
 2. **Planning** — Explore the codebase and create the execution plan. Implementing must not begin before a plan exists.
@@ -42,7 +42,7 @@ Ralph Loop must follow the Ralph Wigum phase order defined by WTL:
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-WTL directive mapping in this host:
+LSM directive mapping in this host:
 
 - `advance_phase`: init → planning, planning → implementing, implementing → review
 - `continue`: keep iterating inside implementing on the current thread
@@ -351,7 +351,7 @@ The repository must ship agent-consumable knowledge alongside the CLI.
 
 ## Phase 1: Init
 
-The init phase is Ralph Loop's concrete realization of the WTL `init` phase.
+The init phase is Ralph Loop's concrete realization of the LSM `init` phase.
 It prepares the worktree and runtime contract before any planning turn starts.
 
 ### Init phase behavior
@@ -360,7 +360,7 @@ It prepares the worktree and runtime contract before any planning turn starts.
 - Parse the success JSON to obtain the worktree path, worktree ID, work branch, base branch, and runtime root.
 - If init fails, diagnose and retry once only if the failure is clearly recoverable.
 - Planning must not begin until init succeeds.
-- A successful init issues the WTL-equivalent `advance_phase` into planning.
+- A successful init issues the LSM-equivalent `advance_phase` into planning.
 
 ---
 
@@ -371,7 +371,7 @@ Spawn a fresh Codex thread for planning. This thread is distinct from the implem
 ### Planning prompt
 
 ```
-You are the planning agent for a Ralph Loop run that follows the WTL Ralph Wigum policy.
+You are the planning agent for a Ralph Loop run that follows the LSM Ralph Wigum policy.
 
 ## Task
 {user_prompt}
@@ -407,7 +407,7 @@ Output <promise>PLAN_READY</promise> when the committed plan is ready for implem
 - Parse the plan file path from the agent output.
 - Require a committed plan before advancing.
 - If the turn fails or ends without `<promise>PLAN_READY</promise>`, abort with an error.
-- A successful planning turn issues the WTL-equivalent `advance_phase` into implementing.
+- A successful planning turn issues the LSM-equivalent `advance_phase` into implementing.
 
 ---
 
@@ -420,7 +420,7 @@ Spawn a new Codex thread for the implementation loop. This thread persists acros
 The same prompt is sent on every implementation turn. The plan file on disk is the source of truth for progress.
 
 ```
-You are the implementation agent for a Ralph Loop run that follows the WTL Ralph Wigum policy.
+You are the implementation agent for a Ralph Loop run that follows the LSM Ralph Wigum policy.
 
 ## Task
 {user_prompt}
@@ -479,7 +479,7 @@ if iteration >= max_iterations:
 - **Same thread, multiple turns**: The implementing phase reuses a single Codex thread across iterations.
 - **Commit per iteration**: Each iteration must leave a new commit or an explicit warning record if the agent failed to create one.
 - **Delivery detection**: Scan `agentMessage` items for the literal string `<promise>DELIVERY_COMPLETE</promise>`.
-- **Failure recovery**: A failed implementation turn maps to WTL `retry` and queues a recovery turn rather than aborting immediately.
+- **Failure recovery**: A failed implementation turn maps to LSM `retry` and queues a recovery turn rather than aborting immediately.
 - **Context compaction**: If the thread hits `ContextWindowExceeded`, call `thread/compact/start` and continue inside the same phase.
 - **Review boundary**: Implementation may only advance the run to review; it must never emit final completion.
 
@@ -492,7 +492,7 @@ After implementation signals delivery readiness, spawn a separate review thread.
 ### Review prompt
 
 ```
-You are the review agent for a Ralph Loop run that follows the WTL Ralph Wigum policy.
+You are the review agent for a Ralph Loop run that follows the LSM Ralph Wigum policy.
 
 ## Instructions
 
@@ -532,7 +532,7 @@ Output <promise>COMPLETE</promise> only when review is satisfied and the phase i
 - Send the review prompt as a single turn.
 - Extract and return the PR URL from the agent output.
 - Final completion is valid only when review emits `<promise>COMPLETE</promise>`.
-- If review finds unresolved delivery gaps, the host may fail the run or route back into implementing only if the WTL policy state is explicitly updated to do so.
+- If review finds unresolved delivery gaps, the host may fail the run or route back into implementing only if the LSM policy state is explicitly updated to do so.
 
 ---
 
@@ -562,7 +562,7 @@ Important wire-format note:
 
 ### Reading control markers
 
-Collect text from `agentMessage` items and let the host map markers to WTL directives:
+Collect text from `agentMessage` items and let the host map markers to LSM directives:
 
 - On `item/completed` where `item.type == "agentMessage"`, read `item.text`.
 - Concatenate all agent message texts from the turn.
@@ -615,7 +615,7 @@ Keep the Go implementation split into focused modules:
 
 - CLI parsing and option normalization
 - Codex app-server JSON-RPC client
-- WTL policy state and directive mapping
+- LSM policy state and directive mapping
 - planning orchestration
 - implementation-loop orchestration
 - review orchestration
@@ -678,7 +678,7 @@ The built harness also benefited from:
 - [ ] `ralph-loop init` subcommand with the documented JSON stdout contract
 - [ ] Worktree-aware boot architecture and automation-safe boot command contract
 - [ ] App-server stdio JSON-RPC client
-- [ ] WTL Ralph policy state machine integration
+- [ ] LSM Ralph policy state machine integration
 - [ ] Planning orchestration
 - [ ] Implementation-loop orchestration with delivery detection
 - [ ] Review orchestration with terminal completion detection
@@ -691,20 +691,20 @@ The built harness also benefited from:
 
 ---
 
-## Formal Verification with WTL
+## Formal Verification with LSM
 
-The normative workflow semantics for Ralph Loop come from WTL's Quint models, not from a Ralph Loop-specific phase machine.
+The normative workflow semantics for Ralph Loop come from LSM's Quint models, not from a Ralph Loop-specific phase machine.
 
 ### Normative upstream models
 
 | Module | Source | What it verifies |
 |--------|--------|------------------|
-| `wtl_engine.qnt` | `what-the-loop.spec` | Directive contract, turn lifecycle, waiting / compaction / retry mechanics, thread reuse semantics |
-| `wtl_policy_ralph_wigum.qnt` | `what-the-loop.spec` | Ralph phase ordering (`idle → init → planning → implementing → review → completed|failed`), delivery-before-review, explicit completion in review only |
+| `lsm_engine.qnt` | `loop-state-machine.spec` | Directive contract, turn lifecycle, waiting / compaction / retry mechanics, thread reuse semantics |
+| `lsm_policy_ralph_wigum.qnt` | `loop-state-machine.spec` | Ralph phase ordering (`idle → init → planning → implementing → review → completed|failed`), delivery-before-review, explicit completion in review only |
 
 ### Supplementary local models
 
-The TLA+ models under `spec/references/tla/` remain useful as local reference material for implementation details such as resource isolation and worktree management, but they are informative only. If a local model disagrees with WTL's Ralph policy, the WTL model wins.
+The TLA+ models under `spec/references/tla/` remain useful as local reference material for implementation details such as resource isolation and worktree management, but they are informative only. If a local model disagrees with LSM's Ralph policy, the LSM model wins.
 
 ### Required properties
 
@@ -732,9 +732,9 @@ When validating the policy semantics, run the Quint models from the upstream rep
 
 When implementing Ralph Loop, verify that:
 
-1. The orchestrator's phase transitions match `wtl_policy_ralph_wigum.qnt`.
-2. The host honors WTL directives rather than inferring workflow meaning from raw turn status alone.
-3. The implementation loop matches WTL retry and compaction behavior.
+1. The orchestrator's phase transitions match `lsm_policy_ralph_wigum.qnt`.
+2. The host honors LSM directives rather than inferring workflow meaning from raw turn status alone.
+3. The implementation loop matches LSM retry and compaction behavior.
 4. Review is the only phase that can convert a successful delivery into terminal completion.
 5. Local worktree and session management still satisfy the supplementary isolation guarantees in `spec/references/tla/`.
 
@@ -760,7 +760,7 @@ When implementing Ralph Loop, verify that:
 ## Key Principles
 
 - **One milestone per iteration.** The agent completes exactly one milestone per loop turn. This keeps commits atomic, diffs reviewable, and makes it trivial to revert a single unit of work.
-- **WTL owns workflow meaning.** Ralph Loop must not invent a competing local phase machine when WTL already defines the Ralph policy.
+- **LSM owns workflow meaning.** Ralph Loop must not invent a competing local phase machine when LSM already defines the Ralph policy.
 - **Implementation is not completion.** The implementation loop stops only by advancing to review, not by declaring terminal success.
 - **Every iteration leaves a commit.** Progress is never lost, and the review phase can reconstruct the full story from the commit history.
 - **The plan is the shared state.** The plan file coordinates planning, implementing, and review, and remains the durable artifact in the repository.
